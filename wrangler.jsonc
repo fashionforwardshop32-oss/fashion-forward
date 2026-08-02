@@ -1,0 +1,13 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "fashion-forward",
+  "main": ".open-next/worker.js",
+  // Must not exceed the date of the workerd runtime bundled with wrangler
+  // (workerd 1.20260730.1 => max 2026-07-30). A future date fails to boot.
+  "compatibility_date": "2026-07-30",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  }
+}

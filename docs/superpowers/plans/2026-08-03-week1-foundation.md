@@ -104,7 +104,7 @@ fashion-forward/
     "@types/node": "24.13.3",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.4",
-    "eslint": "10.8.0",
+    "eslint": "9.39.5",
     "eslint-config-next": "15.5.22",
     "tailwindcss": "4.3.3",
     "typescript": "5.9.3",
@@ -318,6 +318,10 @@ Run: `curl -s -o /dev/null -w "%{http_code}\n" https://fashion-forward.<your-sub
 Expected: `200`.
 
 Record the live URL in this plan file's Task 2 checklist (edit this file, add a line noting the URL) so later tasks and the eventual custom-domain switch have it on hand.
+
+**Live URL (recorded 2026-08-03): https://fashion-forward.fashion-forward.workers.dev** — verified `200`.
+
+Note: `compatibility_date` in `wrangler.jsonc` is `2026-07-30`, not `2026-08-03` as written in Step 4. The `workerd` runtime bundled with wrangler 4.118.0 is `1.20260730.1`, and a compatibility date newer than the runtime's own build date is rejected at startup ("Compatibility date ... is in the future and unsupported"). Use the runtime's date, not today's.
 
 - [ ] **Step 9: Commit**
 
