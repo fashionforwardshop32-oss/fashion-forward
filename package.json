@@ -1,0 +1,34 @@
+{
+  "name": "fashion-forward",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "cf:preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "cf:deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy"
+  },
+  "dependencies": {
+    "next": "15.5.22",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@opennextjs/cloudflare": "1.20.2",
+    "@supabase/supabase-js": "2.111.0",
+    "@tailwindcss/postcss": "4.3.3",
+    "@types/node": "24.13.3",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "eslint": "9.39.5",
+    "eslint-config-next": "15.5.22",
+    "tailwindcss": "4.3.3",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10",
+    "wrangler": "4.118.0"
+  }
+}
