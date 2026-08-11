@@ -54,32 +54,61 @@ export async function createProduct(formData: FormData) {
     throw new Error(`createProduct: ${productError?.message ?? "no product returned"}`);
   }
 
-  const variantRows = validSizes.map((s) => ({
-    product_id: product.id,
-    size: s.size,
-    sku: `${slug}-${s.size}`.toUpperCase().replace(/[^A-Z0-9-]/g, ""),
-    stock_qty: s.stockQty,
-  }));
-
-  const { error: variantError } = await supabase.from("variants").insert(variantRows);
-  if (variantError) {
-    throw new Error(`createProduct: variant insert failed: ${variantError.message}`);
-  }
-
-  if (photos.length > 0) {
-    const uploaded = await uploadProductImages(photos, product.id);
-    const imageRows = uploaded.map((img) => ({
+  try {
+    const variantRows = validSizes.map((s) => ({
       product_id: product.id,
-      url_400: img.url_400,
-      url_800: img.url_800,
-      url_1600: img.url_1600,
-      position: img.position,
+      size: s.size,
+      sku: `${slug}-${s.size}`.toUpperCase().replace(/[^A-Z0-9-]/g, ""),
+      stock_qty: s.stockQty,
     }));
-    const { error: imageError } = await supabase.from("product_images").insert(imageRows);
-    if (imageError) {
-      throw new Error(`createProduct: image row insert failed: ${imageError.message}`);
+
+    const { error: variantError } = await supabase.from("variants").insert(variantRows);
+    if (variantError) {
+      throw new Error(`createProduct: variant insert failed: ${variantError.message}`);
     }
+
+    if (photos.length > 0) {
+      const uploaded = await uploadProductImages(photos, product.id);
+      const imageRows = uploaded.map((img) => ({
+        product_id: product.id,
+        url_400: img.url_400,
+        url_800: img.url_800,
+        url_1600: img.url_1600,
+        position: img.position,
+      }));
+      const { error: imageError } = await supabase.from("product_images").insert(imageRows);
+      if (imageError) {
+        throw new Error(`createProduct: image row insert failed: ${imageError.message}`);
+      }
+    }
+  } catch (err) {
+    // Best-effort cleanup so a partial failure doesn't leave an orphaned
+    // product (possibly `active`, with zero variants) or orphaned Storage
+    // files behind. `variants` and `product_images` cascade-delete with the
+    // product row (see supabase/migrations/20260803000001_schema.sql), but
+    // Storage objects aren't in the FK graph and must be removed separately.
+    // Failures here are swallowed -- the original error below is what the
+    // admin needs to see, not a cleanup-step error.
+    await cleanupOrphanedProduct(supabase, product.id);
+    throw err;
   }
 
   redirect("/admin/products");
+}
+
+async function cleanupOrphanedProduct(
+  supabase: ReturnType<typeof createServerClient>,
+  productId: string,
+) {
+  try {
+    const { data: objects } = await supabase.storage.from("product-images").list(productId);
+    if (objects && objects.length > 0) {
+      const paths = objects.map((obj) => `${productId}/${obj.name}`);
+      await supabase.storage.from("product-images").remove(paths);
+    }
+  } catch {
+    // Best-effort only -- do not let a cleanup failure mask the original error.
+  }
+
+  await supabase.from("products").delete().eq("id", productId);
 }
