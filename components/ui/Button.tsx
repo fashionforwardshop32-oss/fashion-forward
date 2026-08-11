@@ -5,7 +5,7 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
 };
 
 const variantClasses: Record<NonNullable<ButtonProps["variant"]>, string> = {
-  primary: "bg-brand text-white hover:bg-brand/90",
+  primary: "bg-brand text-on-brand hover:bg-brand/90",
   secondary: "bg-tint text-brand hover:bg-tint/80",
 };
 

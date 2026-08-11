@@ -1126,4 +1126,15 @@ Before starting Week 2 (spec §11: catalog, PDP, admin product CRUD), confirm al
 - [ ] All 11 tables exist on the **remote** Mumbai Supabase project (`npx supabase db push` from Task 5 Step 7 completed)
 - [ ] `npx vitest run tests/rls.test.ts` passes against local Supabase
 - [ ] No hex colour or raw Tailwind palette class appears anywhere under `components/` or `app/` (spot-check: `grep -rE "#[0-9a-fA-F]{3,6}|bg-(purple|violet|orange|amber)-[0-9]" components app` should return nothing outside `globals.css`)
+
+  > **Note (2026-08-11, review fix):** the pattern above missed `text-white`, which
+  > had leaked into `Button.tsx` and `Badge.tsx` — the achromatic literals and the
+  > full palette list were never covered. Widen it to:
+  >
+  > ```
+  > grep -rE "#[0-9a-fA-F]{3,6}|(bg|text|border|ring|fill|stroke)-(white|black)|(bg|text|border|ring|fill|stroke)-(slate|gray|grey|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-[0-9]" components app
+  > ```
+  >
+  > Colours that sit on top of a brand/accent fill now have their own tokens
+  > (`text-on-brand`, `text-on-accent`) rather than a literal `text-white`.
 - [ ] `.env.local` is confirmed gitignored and was never committed (`git log --all --oneline -- .env.local` returns nothing)

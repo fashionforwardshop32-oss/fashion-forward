@@ -9,6 +9,11 @@
   --color-ink: #1f1b2e;
   --color-ink-muted: #6b6478;
 
+  /* Text drawn on top of a brand/accent fill. Both white today, but tracked
+     separately so either fill can change without dragging the other along. */
+  --color-on-brand: #ffffff;
+  --color-on-accent: #ffffff;
+
   --radius-card: 1.25rem;
 
   --font-display: var(--font-baloo);
