@@ -1,0 +1,15 @@
+{
+  "name": "photon-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Picks the right @cf-wasm/photon build per runtime. See ./README.md.",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "workerd": "./workerd.js",
+      "node": "./node.js",
+      "default": "./workerd.js"
+    }
+  }
+}
