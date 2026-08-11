@@ -5,26 +5,49 @@ const SUPABASE_URL = process.env.SUPABASE_URL ?? "http://127.0.0.1:54321";
 const ANON_KEY = process.env.SUPABASE_ANON_KEY ?? "";
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 
-if (!ANON_KEY || !SERVICE_ROLE_KEY) {
+/**
+ * These tests write real rows (auth users, orders, payments, coupons), so they
+ * are hard-limited to a local Supabase stack. A remote SUPABASE_URL left
+ * exported in the shell would otherwise pollute the production Mumbai project.
+ */
+const isLoopback = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?(\/|$)/.test(SUPABASE_URL);
+if (!isLoopback) {
   throw new Error(
-    "Set SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY from `npx supabase status` before running tests."
+    `Refusing to run RLS tests against a non-loopback SUPABASE_URL (${SUPABASE_URL}). ` +
+      "This suite writes real data and must only target local Supabase " +
+      "(http://127.0.0.1:54321 or http://localhost:54321) from `npx supabase status`."
   );
 }
 
-const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+const hasEnv = Boolean(ANON_KEY && SERVICE_ROLE_KEY);
+if (!hasEnv) {
+  // Written straight to stderr: Vitest swallows `console.*` emitted during
+  // collection, before any task is running.
+  process.stderr.write(
+    "[rls.test] SKIPPED: SUPABASE_ANON_KEY / SUPABASE_SERVICE_ROLE_KEY are unset.\n" +
+      "[rls.test] Run `npx supabase start`, then export both from `npx supabase status` to run this suite.\n"
+  );
+}
+
+/** Lazy so an unconfigured run skips instead of throwing during collection. */
+let cachedAdmin: SupabaseClient | undefined;
+function adminClient(): SupabaseClient {
+  cachedAdmin ??= createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+  return cachedAdmin;
+}
 
 async function createTestCustomer(emailPrefix: string) {
   const email = `${emailPrefix}-${Date.now()}-${Math.random().toString(36).slice(2)}@test.local`;
   const password = "test-pass-123!";
 
-  const { data, error } = await admin.auth.admin.createUser({
+  const { data, error } = await adminClient().auth.admin.createUser({
     email,
     password,
     email_confirm: true,
   });
   if (error || !data.user) throw error ?? new Error("no user returned");
 
-  const { error: insertError } = await admin
+  const { error: insertError } = await adminClient()
     .from("customers")
     .insert({ id: data.user.id, phone: `9${Math.floor(Math.random() * 1_000_000_000)}` });
   if (insertError) throw insertError;
@@ -40,7 +63,7 @@ async function createTestCustomer(emailPrefix: string) {
 async function seedVariant() {
   const suffix = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
-  const { data: product, error: productError } = await admin
+  const { data: product, error: productError } = await adminClient()
     .from("products")
     .insert({
       slug: `test-product-${suffix}`,
@@ -54,7 +77,7 @@ async function seedVariant() {
     .single();
   if (productError || !product) throw productError ?? new Error("no product returned");
 
-  const { data: variant, error: variantError } = await admin
+  const { data: variant, error: variantError } = await adminClient()
     .from("variants")
     .insert({ product_id: product.id, size: "M", sku: `TEST-SKU-${suffix}`, stock_qty: 5 })
     .select()
@@ -65,7 +88,7 @@ async function seedVariant() {
 }
 
 async function seedOrder(customerId: string) {
-  const { data: order, error } = await admin
+  const { data: order, error } = await adminClient()
     .from("orders")
     .insert({
       order_no: `TEST-${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -102,7 +125,7 @@ async function expectNoClientAccess(
   expect(targeted ?? []).toHaveLength(0);
 }
 
-describe("orders row level security", () => {
+describe.skipIf(!hasEnv)("orders row level security", () => {
   it("blocks a customer from reading another customer's order, items and addresses", async () => {
     const owner = await createTestCustomer("owner");
     const stranger = await createTestCustomer("stranger");
@@ -110,7 +133,7 @@ describe("orders row level security", () => {
     const order = await seedOrder(owner.userId);
     const variant = await seedVariant();
 
-    const { data: orderItem, error: itemError } = await admin
+    const { data: orderItem, error: itemError } = await adminClient()
       .from("order_items")
       .insert({
         order_id: order.id,
@@ -123,7 +146,7 @@ describe("orders row level security", () => {
       .single();
     if (itemError || !orderItem) throw itemError ?? new Error("no order item returned");
 
-    const { data: address, error: addressError } = await admin
+    const { data: address, error: addressError } = await adminClient()
       .from("addresses")
       .insert({
         customer_id: owner.userId,
@@ -179,12 +202,12 @@ describe("orders row level security", () => {
   });
 });
 
-describe("service-role-only tables", () => {
+describe.skipIf(!hasEnv)("service-role-only tables", () => {
   it("blocks an authenticated client from reading payments", async () => {
     const customer = await createTestCustomer("payments-reader");
     const order = await seedOrder(customer.userId);
 
-    const { data: payment, error } = await admin
+    const { data: payment, error } = await adminClient()
       .from("payments")
       .insert({
         order_id: order.id,
@@ -205,7 +228,7 @@ describe("service-role-only tables", () => {
   it("blocks an authenticated client from reading coupons", async () => {
     const customer = await createTestCustomer("coupons-reader");
 
-    const { data: coupon, error } = await admin
+    const { data: coupon, error } = await adminClient()
       .from("coupons")
       .insert({
         code: `TEST${Date.now()}${Math.floor(Math.random() * 1000)}`,
@@ -221,7 +244,7 @@ describe("service-role-only tables", () => {
   });
 });
 
-describe("customers column-level update grant", () => {
+describe.skipIf(!hasEnv)("customers column-level update grant", () => {
   it("allows updating name but rejects updating phone", async () => {
     const customer = await createTestCustomer("column-grant");
 
@@ -231,7 +254,7 @@ describe("customers column-level update grant", () => {
       .eq("id", customer.userId);
     expect(nameError).toBeNull();
 
-    const { data: afterName } = await admin
+    const { data: afterName } = await adminClient()
       .from("customers")
       .select("name, phone")
       .eq("id", customer.userId)
@@ -246,7 +269,7 @@ describe("customers column-level update grant", () => {
       .eq("id", customer.userId);
     expect(phoneError).not.toBeNull();
 
-    const { data: afterPhone } = await admin
+    const { data: afterPhone } = await adminClient()
       .from("customers")
       .select("phone")
       .eq("id", customer.userId)
