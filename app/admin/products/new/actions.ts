@@ -110,5 +110,9 @@ async function cleanupOrphanedProduct(
     // Best-effort only -- do not let a cleanup failure mask the original error.
   }
 
-  await supabase.from("products").delete().eq("id", productId);
+  try {
+    await supabase.from("products").delete().eq("id", productId);
+  } catch {
+    // Best-effort only -- do not let a cleanup failure mask the original error.
+  }
 }
