@@ -1,3 +1,5 @@
+import "server-only";
+
 import { PhotonImage, SamplingFilter, resize } from "photon-runtime";
 
 const TARGET_WIDTHS = [400, 800, 1600] as const;
