@@ -56,11 +56,36 @@ export async function updateProduct(productId: string, formData: FormData) {
       .maybeSingle();
 
     if (existing) {
-      await supabase.from("variants").update({ stock_qty: stockQty }).eq("id", existing.id);
+      const { error } = await supabase
+        .from("variants")
+        .update({ stock_qty: stockQty })
+        .eq("id", existing.id);
+      if (error) throw new Error(`updateProduct: variant update failed: ${error.message}`);
     } else {
       const sku = `${productId}-${size}`.toUpperCase().replace(/[^A-Z0-9-]/g, "").slice(0, 40);
-      await supabase.from("variants").insert({ product_id: productId, size, sku, stock_qty: stockQty });
+      const { error } = await supabase
+        .from("variants")
+        .insert({ product_id: productId, size, sku, stock_qty: stockQty });
+      if (error) throw new Error(`updateProduct: variant insert failed: ${error.message}`);
     }
+  }
+
+  // Sizes the owner removed in the form (via ProductForm's "Remove" button)
+  // never reach the loop above, so they'd otherwise stay live in the DB —
+  // delete any existing variant whose size isn't in the submitted list.
+  const submittedSizes = new Set(sizes.map((row) => row.size.trim()).filter(Boolean));
+  const { data: existingVariants } = await supabase
+    .from("variants")
+    .select("id, size")
+    .eq("product_id", productId);
+
+  const toDelete = (existingVariants ?? []).filter((v) => !submittedSizes.has(v.size));
+  if (toDelete.length > 0) {
+    const { error } = await supabase
+      .from("variants")
+      .delete()
+      .in("id", toDelete.map((v) => v.id));
+    if (error) throw new Error(`updateProduct: variant delete failed: ${error.message}`);
   }
 
   redirect("/admin/products");
