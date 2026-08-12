@@ -1,5 +1,6 @@
 type BadgeProps = {
   tone?: "accent" | "highlight" | "brand";
+  className?: string;
   children: React.ReactNode;
 };
 
@@ -9,10 +10,10 @@ const toneClasses: Record<NonNullable<BadgeProps["tone"]>, string> = {
   brand: "bg-brand text-on-brand",
 };
 
-export function Badge({ tone = "accent", children }: BadgeProps) {
+export function Badge({ tone = "accent", className = "", children }: BadgeProps) {
   return (
     <span
-      className={`inline-block rounded-full px-3 py-1 text-xs font-body font-semibold ${toneClasses[tone]}`}
+      className={`inline-block rounded-full px-3 py-1 text-xs font-body font-semibold ${toneClasses[tone]} ${className}`}
     >
       {children}
     </span>
