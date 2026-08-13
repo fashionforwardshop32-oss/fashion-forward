@@ -24,6 +24,7 @@ export default async function ProductPage({
         <div className="space-y-2">
           {product.images.length > 0 ? (
             product.images.map((img) => (
+              // eslint-disable-next-line @next/next/no-img-element -- Cloudflare Workers has no next/image runtime optimizer; images are pre-sized to 400/800/1600 WebP at upload time, see lib/images/photon.ts
               <img
                 key={img.position}
                 src={img.url_800}

@@ -9,6 +9,7 @@ export function ProductCard({ product }: { product: ProductListItem }) {
       <Card className="overflow-hidden transition-transform hover:-translate-y-0.5">
         <div className="aspect-[4/5] bg-tint">
           {product.cover_image_url ? (
+            // eslint-disable-next-line @next/next/no-img-element -- Cloudflare Workers has no next/image runtime optimizer; images are pre-sized to 400/800/1600 WebP at upload time, see lib/images/photon.ts
             <img
               src={product.cover_image_url}
               alt={product.title}
