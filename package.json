@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@cf-wasm/photon": "0.4.0",
-    "@supabase/ssr": "^0.12.4",
+    "@supabase/ssr": "0.12.4",
     "@supabase/supabase-js": "2.111.0",
     "next": "15.5.22",
     "photon-runtime": "file:vendor/photon-runtime",
