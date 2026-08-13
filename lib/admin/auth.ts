@@ -9,6 +9,15 @@ function adminEmails(): string[] {
 }
 
 /**
+ * Same allowlist test middleware applies (lib/supabase/middleware.ts).
+ * Exported so the login action can reject a non-allowlisted sign-in up
+ * front instead of handing out a session that middleware then bounces.
+ */
+export function isAllowedAdminEmail(email: string | null | undefined): boolean {
+  return !!email && adminEmails().includes(email.toLowerCase());
+}
+
+/**
  * Call at the top of every admin Server Action and Server Component.
  * Redirects to /admin/login if the caller isn't a logged-in, allowlisted
  * admin. Belt-and-braces alongside middleware.ts — middleware can be
@@ -21,7 +30,7 @@ export async function requireAdmin() {
     data: { user },
   } = await supabase.auth.getUser();
 
-  if (!user?.email || !adminEmails().includes(user.email.toLowerCase())) {
+  if (!user || !isAllowedAdminEmail(user.email)) {
     redirect("/admin/login");
   }
 

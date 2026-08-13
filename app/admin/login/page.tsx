@@ -25,6 +25,11 @@ export default async function AdminLoginPage({
             Enter both email and password.
           </p>
         )}
+        {error === "notallowed" && (
+          <p className="mt-4 rounded-card bg-accent/10 p-3 text-sm text-ink">
+            This account isn&apos;t authorized for admin access.
+          </p>
+        )}
 
         <form action={signInAdmin} className="mt-5 space-y-3">
           <div>
