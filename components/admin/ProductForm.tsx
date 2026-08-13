@@ -22,16 +22,24 @@ export function ProductForm({
   categories,
   defaultValues,
   submitLabel,
+  allowPhotos = true,
 }: {
   categories: Category[];
   defaultValues?: Partial<ProductFormValues>;
   submitLabel: string;
+  /**
+   * Only the create action reads the `photos` field. Pass false on edit so
+   * the input isn't shown as something that works when it silently wouldn't.
+   */
+  allowPhotos?: boolean;
 }) {
   const [gender, setGender] = useState<ProductFormValues["gender"]>(
     defaultValues?.gender ?? "unisex",
   );
   const [sizes, setSizes] = useState<{ size: string; stockQty: string }[]>(
-    defaultValues?.sizes ?? [{ size: "", stockQty: "0" }],
+    // `??` doesn't fall back on an empty array, so a product with zero
+    // variants would render zero rows and submit "[]" -- check length.
+    defaultValues?.sizes?.length ? defaultValues.sizes : [{ size: "", stockQty: "0" }],
   );
 
   function addSizeRow() {
@@ -134,20 +142,22 @@ export function ProductForm({
         />
       </div>
 
-      <div>
-        <label htmlFor="photos" className="mb-1 block text-sm font-medium text-ink">
-          Photos
-        </label>
-        <input
-          id="photos"
-          name="photos"
-          type="file"
-          accept="image/*"
-          multiple
-          className="w-full text-sm text-ink"
-        />
-        <p className="mt-1 text-xs text-ink-muted">First photo becomes the cover image.</p>
-      </div>
+      {allowPhotos && (
+        <div>
+          <label htmlFor="photos" className="mb-1 block text-sm font-medium text-ink">
+            Photos
+          </label>
+          <input
+            id="photos"
+            name="photos"
+            type="file"
+            accept="image/*"
+            multiple
+            className="w-full text-sm text-ink"
+          />
+          <p className="mt-1 text-xs text-ink-muted">First photo becomes the cover image.</p>
+        </div>
+      )}
 
       <div>
         <span className="mb-1 block text-sm font-medium text-ink">Sizes &amp; stock</span>

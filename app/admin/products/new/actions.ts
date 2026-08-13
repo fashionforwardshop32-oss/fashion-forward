@@ -1,5 +1,6 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireAdmin } from "@/lib/admin/auth";
 import { createServerClient } from "@/lib/supabase/server";
@@ -92,6 +93,12 @@ export async function createProduct(formData: FormData) {
     await cleanupOrphanedProduct(supabase, product.id);
     throw err;
   }
+
+  // Storefront pages are ISR with revalidate = 300, so without this a new
+  // product takes up to five minutes to appear publicly -- which reads as
+  // "it didn't work". "layout" revalidates the whole tree under / (home,
+  // category pages, PDPs) in one call.
+  revalidatePath("/", "layout");
 
   redirect("/admin/products");
 }

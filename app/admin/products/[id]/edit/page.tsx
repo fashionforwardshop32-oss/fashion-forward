@@ -30,6 +30,9 @@ export default async function EditProductPage({
         <ProductForm
           categories={categories ?? []}
           submitLabel="Save changes"
+          // updateProduct doesn't read `photos`; showing the field here would
+          // let the owner pick a replacement photo and silently discard it.
+          allowPhotos={false}
           defaultValues={{
             title: product.title,
             categoryId: product.category_id ?? "",
