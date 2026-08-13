@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { ProductCard } from "@/components/product/ProductCard";
+import { formatInr } from "@/components/ui/PriceTag";
 import type { ProductListItem } from "@/lib/db/products";
 
 export function CategoryFilters({ products }: { products: ProductListItem[] }) {
@@ -55,7 +56,7 @@ export function CategoryFilters({ products }: { products: ProductListItem[] }) {
         </select>
 
         <label className="flex items-center gap-2 text-sm text-ink">
-          Up to ₹{maxPrice}
+          Up to {formatInr(maxPrice)}
           <input
             type="range"
             min={0}

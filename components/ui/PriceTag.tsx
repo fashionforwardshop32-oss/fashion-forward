@@ -3,7 +3,8 @@ type PriceTagProps = {
   originalPrice?: number;
 };
 
-const formatInr = (value: number) =>
+/** Single source of ₹ formatting -- import this rather than writing `₹{n}`. */
+export const formatInr = (value: number) =>
   new Intl.NumberFormat("en-IN", {
     style: "currency",
     currency: "INR",

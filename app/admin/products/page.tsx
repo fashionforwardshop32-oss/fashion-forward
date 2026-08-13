@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireAdmin } from "@/lib/admin/auth";
 import { createServerClient } from "@/lib/supabase/server";
 import { Badge } from "@/components/ui/Badge";
+import { formatInr } from "@/components/ui/PriceTag";
 import { toggleProductStatus } from "./actions";
 
 export default async function AdminProductsPage() {
@@ -32,7 +33,7 @@ export default async function AdminProductsPage() {
               <Link href={`/admin/products/${p.id}/edit`} className="font-medium text-ink">
                 {p.title}
               </Link>
-              <div className="text-sm text-ink-muted">₹{p.base_price}</div>
+              <div className="text-sm text-ink-muted">{formatInr(p.base_price)}</div>
             </div>
             <div className="flex items-center gap-3">
               <Badge tone={p.status === "active" ? "brand" : "accent"}>{p.status}</Badge>
