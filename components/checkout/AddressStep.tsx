@@ -22,6 +22,7 @@ export function AddressStep({
   onAddressChosen: (addressId: string) => void;
 }) {
   const [addresses, setAddresses] = useState<Address[] | null>(null);
+  const [loadError, setLoadError] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
 
@@ -37,19 +38,36 @@ export function AddressStep({
   const whatsappNumber = process.env.NEXT_PUBLIC_WHATSAPP_CONTACT_NUMBER ?? "";
 
   useEffect(() => {
-    supabase
-      .from("addresses")
-      .select("id, line1, line2, landmark, pincode, is_default")
-      .eq("customer_id", customerId)
-      .order("is_default", { ascending: false })
-      .then(({ data }) => {
+    let cancelled = false;
+    setLoadError(false);
+
+    async function loadAddresses() {
+      try {
+        const { data, error: fetchError } = await supabase
+          .from("addresses")
+          .select("id, line1, line2, landmark, pincode, is_default")
+          .eq("customer_id", customerId)
+          .order("is_default", { ascending: false });
+        if (cancelled) return;
+        if (fetchError) {
+          setLoadError(true);
+          return;
+        }
         setAddresses(data ?? []);
         if (data && data.length > 0) {
           setSelectedId(data[0]!.id);
         } else {
           setShowForm(true);
         }
-      });
+      } catch {
+        if (!cancelled) setLoadError(true);
+      }
+    }
+
+    loadAddresses();
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customerId]);
 
@@ -92,6 +110,21 @@ export function AddressStep({
     }
 
     onAddressChosen(data.id);
+  }
+
+  if (loadError) {
+    return (
+      <div className="rounded-card border border-ink/10 bg-surface p-4 text-center">
+        <p className="text-sm text-ink-muted">Couldn&apos;t load your addresses. Please try reloading.</p>
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+          className="mt-3 inline-block text-sm font-medium text-brand underline"
+        >
+          Reload
+        </button>
+      </div>
+    );
   }
 
   if (addresses === null) {
