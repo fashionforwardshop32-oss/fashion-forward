@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/Button";
+import { useCart } from "@/lib/cart/context";
 
 type Variant = { id: string; size: string; stock_qty: number };
 
@@ -9,8 +10,17 @@ export function VariantPicker({ variants }: { variants: Variant[] }) {
   const [selectedId, setSelectedId] = useState<string | null>(
     variants.find((v) => v.stock_qty > 0)?.id ?? null,
   );
+  const [justAdded, setJustAdded] = useState(false);
+  const { addItem } = useCart();
 
   const selected = variants.find((v) => v.id === selectedId);
+
+  function handleAddToBag() {
+    if (!selected) return;
+    addItem(selected.id, 1);
+    setJustAdded(true);
+    setTimeout(() => setJustAdded(false), 1500);
+  }
 
   return (
     <div>
@@ -39,12 +49,9 @@ export function VariantPicker({ variants }: { variants: Variant[] }) {
         })}
       </div>
 
-      <Button type="button" disabled={!selected} className="w-full">
-        {selected ? "Add to bag" : "Select a size"}
+      <Button type="button" disabled={!selected} className="w-full" onClick={handleAddToBag}>
+        {justAdded ? "Added ✓" : selected ? "Add to bag" : "Select a size"}
       </Button>
-      <p className="mt-2 text-center text-xs text-ink-muted">
-        Cart launches in Week 3 — sizes and stock shown here are live.
-      </p>
     </div>
   );
 }
