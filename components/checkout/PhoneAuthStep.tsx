@@ -5,11 +5,38 @@ import { Button } from "@/components/ui/Button";
 import { createClient } from "@/lib/supabase/client";
 import { ensureCustomerRecord } from "@/lib/auth/customer";
 
-function toE164(input: string): string {
+/**
+ * Reduces whatever the user typed to the bare 10 digits of an Indian
+ * mobile number, or null if it doesn't look like one at all. Handles the
+ * shapes this one input realistically receives:
+ *   - "9876543210"     -- bare 10-digit number (the intended case; the
+ *                          "+91" is already shown as a fixed label next
+ *                          to the input)
+ *   - "919876543210"   -- "91" country code + the 10-digit number typed
+ *                          anyway, out of habit from other forms (12
+ *                          digits total)
+ *   - "+919876543210"  -- same as above with a literal "+", which
+ *                          `\D` stripping removes before we ever see it
+ *
+ * A genuine 10-digit number that happens to start with "91" (Indian
+ * mobile numbers start with 6/7/8/9 and can be followed by any digit,
+ * so "91XXXXXXXX" is a real, valid prefix) is indistinguishable from a
+ * country-code-prefixed number -- but only at exactly 10 digits, which
+ * is why the length check below, not a `startsWith`, is what decides
+ * whether the leading "91" gets stripped. At 12 digits there's no
+ * ambiguity: a real Indian mobile number is never 12 digits on its own,
+ * so "91" + 10 more digits can only mean the country code was included.
+ */
+function normalizeIndianMobileDigits(input: string): string | null {
   const digits = input.replace(/\D/g, "");
-  if (digits.length === 10) return `+91${digits}`;
-  if (digits.startsWith("91") && digits.length === 12) return `+${digits}`;
-  return `+${digits}`;
+  if (digits.length === 12 && digits.startsWith("91")) return digits.slice(2);
+  if (digits.length === 10) return digits;
+  return null;
+}
+
+function toE164(input: string): string | null {
+  const digits = normalizeIndianMobileDigits(input);
+  return digits ? `+91${digits}` : null;
 }
 
 export function PhoneAuthStep({ onVerified }: { onVerified: () => void }) {
@@ -23,13 +50,12 @@ export function PhoneAuthStep({ onVerified }: { onVerified: () => void }) {
 
   async function sendOtp() {
     setError(null);
-    const digits = phoneInput.replace(/\D/g, "");
-    if (digits.length < 10) {
+    const phone = toE164(phoneInput);
+    if (!phone) {
       setError("Enter a valid 10-digit mobile number.");
       return;
     }
     setLoading(true);
-    const phone = toE164(phoneInput);
     const { error: otpError } = await supabase.auth.signInWithOtp({
       phone,
       options: { channel: "whatsapp" },
@@ -48,8 +74,16 @@ export function PhoneAuthStep({ onVerified }: { onVerified: () => void }) {
       setError("Enter the code sent to your WhatsApp.");
       return;
     }
-    setLoading(true);
     const phone = toE164(phoneInput);
+    if (!phone) {
+      // Shouldn't happen -- sendOtp already validated phoneInput before
+      // advancing to this step, and the phone field isn't editable here.
+      // Guard anyway rather than assert, since the type is nullable.
+      setError("Something went wrong with your number. Start over.");
+      setStep("phone");
+      return;
+    }
+    setLoading(true);
     const { error: verifyError } = await supabase.auth.verifyOtp({
       phone,
       token: otp.trim(),
@@ -89,7 +123,13 @@ export function PhoneAuthStep({ onVerified }: { onVerified: () => void }) {
               <input
                 id="phone"
                 inputMode="numeric"
-                maxLength={10}
+                // 13 chars covers the worst realistic case: "+91" plus the
+                // 10-digit number (someone typing the country code out of
+                // habit even though it's already shown as a label to the
+                // left). The old maxLength={10} silently truncated that
+                // input to 10 characters, which is what caused this bug --
+                // see normalizeIndianMobileDigits above.
+                maxLength={13}
                 value={phoneInput}
                 onChange={(e) => setPhoneInput(e.target.value)}
                 placeholder="98765 43210"
