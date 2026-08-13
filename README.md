@@ -97,3 +97,7 @@ npm run dev
 
   Nothing consumes it yet; it becomes required once Week 2 adds server-side
   admin code (`lib/supabase/server.ts`).
+- Some things can only be verified by hand against the deployed Worker — most
+  importantly, the image resize pipeline has **not** yet been proven with a
+  real full-size phone photo under the live Worker's resource limits. See
+  [`docs/deploy-checklist.md`](docs/deploy-checklist.md).
