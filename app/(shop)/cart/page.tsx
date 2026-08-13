@@ -10,16 +10,37 @@ import { CartLineItem } from "@/components/cart/CartLineItem";
 export default function CartPage() {
   const { lines } = useCart();
   const [details, setDetails] = useState<CartDetailLine[] | null>(null);
+  const [loadError, setLoadError] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    getCartDetails(lines).then((result) => {
-      if (!cancelled) setDetails(result);
-    });
+    setLoadError(false);
+    getCartDetails(lines)
+      .then((result) => {
+        if (!cancelled) setDetails(result);
+      })
+      .catch(() => {
+        if (!cancelled) setLoadError(true);
+      });
     return () => {
       cancelled = true;
     };
   }, [lines]);
+
+  if (loadError) {
+    return (
+      <main className="mx-auto max-w-2xl p-8 text-center">
+        <p className="text-ink-muted">Couldn&apos;t load your bag. Please try reloading.</p>
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+          className="mt-3 inline-block font-medium text-brand"
+        >
+          Reload
+        </button>
+      </main>
+    );
+  }
 
   if (details === null) {
     return <main className="mx-auto max-w-2xl p-4 text-ink-muted">Loading your bag…</main>;
