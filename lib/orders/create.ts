@@ -6,7 +6,16 @@ import { getCartDetails } from "@/lib/cart/actions";
 import type { CartLine } from "@/lib/cart/context";
 import { generateOrderNo } from "./order-no";
 
-const COD_CAP_PAISE = Number(process.env.COD_CAP_PAISE ?? 300000);
+// A non-numeric or non-positive COD_CAP_PAISE (a typo'd deploy config, an
+// accidentally-blank value, etc.) must not silently disable the cap. `??`
+// alone only catches `undefined`/`null` -- a garbage string like "abc"
+// still passes `??` and turns into `Number("abc") === NaN`, and
+// `total > NaN` is always false, so every order would pass the cap check
+// with no error and no signal anything was wrong. Validate the parsed
+// value is actually usable and fall back to the documented default
+// otherwise.
+const parsedCap = Number(process.env.COD_CAP_PAISE);
+const COD_CAP_PAISE = Number.isFinite(parsedCap) && parsedCap > 0 ? parsedCap : 300000;
 
 // COD orders are inserted at "pending_payment" (same initial value as the
 // Razorpay path -- no special-casing needed at insert time) and immediately
@@ -24,12 +33,28 @@ const COD_CAP_PAISE = Number(process.env.COD_CAP_PAISE ?? 300000);
 // table treating pending_payment and cod_pending as mutually exclusive --
 // that rule is about externally-observable transitions (an admin or the
 // storefront never seeing a COD order flip between these two states after
-// the fact). Here, "pending_payment" is a sub-second, purely-internal value
-// that exists only inside this one function call and is never read back by
-// any other code path -- by the time this function returns, or any other
-// request could observe the row, it is already at cod_pending. isLegalTransition
-// is a pre-flight advisory check for genuinely external transitions;
-// finalize_order's from/to pair, not that table, is what actually gates this.
+// the fact). The intent here is for "pending_payment" to be a sub-second,
+// purely-internal value for a COD order, immediately moved to cod_pending a
+// few lines below in the same request. isLegalTransition is a pre-flight
+// advisory check for genuinely external transitions; finalize_order's
+// from/to pair, not that table, is what actually gates this call.
+//
+// Correction to an earlier version of this comment: it previously claimed
+// this row is "never read back by any other code path." That overstated
+// it -- the `orders` insert genuinely commits before finalize_order runs,
+// and the row is real and RLS-readable by anything with access for
+// whatever window elapses between the two calls. The accurate claim is
+// narrower: no consumer reads `orders` mid-checkout today, so nothing
+// currently observes a COD order sitting at pending_payment -- but the row
+// is real, and if the request dies in that window (before finalize_order
+// ever runs), the order is genuinely stranded at pending_payment with
+// payment_mode "cod" forever: no Razorpay verify/webhook will ever touch
+// it (it isn't a Razorpay order), and it silently disqualifies that
+// customer from the first-order COD cap exemption on every future attempt
+// (the cap check below counts "any prior order, any status"). Closing this
+// for real needs either an idempotency key on order creation or a
+// periodic sweep to reconcile/cancel stranded pending_payment COD orders
+// -- Week 5-level reconciliation work, out of scope for this function.
 export type CreateOrderResult =
   | { orderId: string; status: "pending_payment" | "cod_pending" }
   | { error: string };
@@ -55,6 +80,18 @@ export async function createOrder(input: {
     return { error: "Your bag is empty." };
   }
   if (available.length !== cartDetails.length) {
+    return { error: "Some items in your bag are no longer available. Please review your bag." };
+  }
+
+  // getCartDetails clamps qty to the variant's current stock, which can
+  // land on 0 without flipping `available` to false -- that happens when a
+  // variant sells out to exactly zero between the cart page and this call.
+  // A qty-0 line would violate order_items' `check (qty > 0)` constraint if
+  // it reached the insert below, surfacing as a generic "Couldn't save your
+  // order items" error with no indication anything sold out. Catch it here,
+  // before any row is written, with the same message already shown for
+  // genuinely unavailable lines.
+  if (available.some((l) => l.qty < 1)) {
     return { error: "Some items in your bag are no longer available. Please review your bag." };
   }
 
@@ -148,6 +185,13 @@ export async function createOrder(input: {
   // COD: pending_payment -> cod_pending is the commit point that decrements
   // stock. This is the order's real resting state until Week 5's admin
   // "Confirm" action later moves it to confirmed.
+  //
+  // Known gap, not fully closable from this function alone: if the request
+  // dies *before this call ever runs* (between the orders insert above
+  // committing and this line executing), the order is stranded at
+  // pending_payment with payment_mode "cod" -- see the long comment on
+  // CreateOrderResult above for what that means and what actually closes it
+  // (idempotency key on creation, or a periodic sweeper; Week 5 work).
   const { data: finalized, error: finalizeError } = await supabase.rpc("finalize_order", {
     p_order_id: order.id,
     p_from_status: "pending_payment",
@@ -155,10 +199,39 @@ export async function createOrder(input: {
   });
 
   if (finalizeError?.message === "insufficient_stock") {
+    // finalize_order raises before touching anything on insufficient stock
+    // (Task 2's race test proves the whole call rolls back) -- nothing
+    // committed, so deleting the order here is always safe.
     await supabase.from("orders").delete().eq("id", order.id);
     return { error: "Sorry, an item in your bag just sold out." };
   }
   if (finalizeError || !finalized) {
+    // Any other error (or a false/null result with no error) is ambiguous:
+    // finalize_order may have actually committed in Postgres -- decremented
+    // stock and set status to cod_pending -- with only the HTTP response
+    // back to this request lost (network blip, timeout, request
+    // cancellation). Blindly deleting the order here would leave that
+    // decrement standing with no order left to account for it (silent
+    // inventory loss), and any client-side retry would decrement a second
+    // time. Re-read the order's actual committed status before deciding.
+    const { data: recheck, error: recheckError } = await supabase
+      .from("orders")
+      .select("status")
+      .eq("id", order.id)
+      .single();
+
+    if (!recheckError && recheck?.status === "cod_pending") {
+      // The RPC did succeed -- the error was in getting the response back,
+      // not in the operation itself.
+      return { orderId: order.id, status: "cod_pending" };
+    }
+
+    // Either the RPC genuinely never committed, or the recheck itself also
+    // failed (a doubly-unlikely case this task can't fully close either --
+    // same class of gap as the stranded-order comment above, and the same
+    // real fix: reconciliation tooling, not another retry here). Deleting
+    // is the safer default in both remaining cases: an order stuck showing
+    // the customer a dead end forever is worse than a rare false cleanup.
     await supabase.from("orders").delete().eq("id", order.id);
     return { error: "Couldn't confirm your order. Try again." };
   }
