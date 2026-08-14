@@ -47,11 +47,13 @@ describe("isLegalTransition", () => {
   });
 
   it("rejects any transition out of a terminal state", () => {
-    // "delivered" is intentionally excluded: it has exactly one legal
-    // successor (returned), already covered by the "allows returned and rto
-    // only from delivered or out_for_delivery" test above.
-    for (const terminal of ["cancelled", "returned", "rto"] as OrderStatus[]) {
+    for (const terminal of ["delivered", "cancelled", "returned", "rto"] as OrderStatus[]) {
       for (const to of ALL_STATUSES) {
+        // "delivered" has exactly one legal successor (returned), already
+        // asserted true by the "allows returned and rto only from delivered
+        // or out_for_delivery" test above — skip it here so this loop only
+        // covers delivered's illegal exits.
+        if (terminal === "delivered" && to === "returned") continue;
         if (to === terminal) continue;
         expect(isLegalTransition(terminal, to)).toBe(false);
       }
