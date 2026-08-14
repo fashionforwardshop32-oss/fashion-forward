@@ -12,10 +12,30 @@ export function ReviewStep({
   addressSummary: string;
 }) {
   const available = lines.filter((l) => l.available);
+  // Unavailable lines stay out of the total, but they don't get to vanish
+  // silently: a product that went out of stock or got archived between the
+  // cart page and this screen is called out below, the way /cart does with
+  // CartLineItem's "no longer available" row. Read-only here — this is a
+  // summary, so there's nothing to edit, just something to be told about.
+  const unavailable = lines.filter((l) => !l.available);
   const subtotal = available.reduce((sum, l) => sum + l.price * l.qty, 0);
 
   return (
     <div className="space-y-4">
+      {unavailable.length > 0 && (
+        <div className="rounded-card bg-accent/10 p-4">
+          <p className="text-sm font-medium text-ink">
+            {unavailable.length === 1
+              ? "1 item is no longer available and has been removed from your order."
+              : `${unavailable.length} items are no longer available and have been removed from your order.`}
+          </p>
+          <p className="mt-1 text-sm text-ink-muted">
+            They sold out or were taken off the store since you added them, so they aren&apos;t
+            in the total below. Everything else is ready to go.
+          </p>
+        </div>
+      )}
+
       <div className="rounded-card border border-ink/10 bg-surface p-4">
         <h2 className="mb-2 font-display text-lg font-bold text-ink">Order summary</h2>
         <div className="space-y-2">
