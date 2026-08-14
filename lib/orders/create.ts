@@ -5,6 +5,7 @@ import { createSessionClient } from "@/lib/supabase/server";
 import { getCartDetails } from "@/lib/cart/actions";
 import type { CartLine } from "@/lib/cart/context";
 import { generateOrderNo } from "./order-no";
+import { createRazorpayOrder as createRazorpayOrderInternal } from "@/lib/payments/razorpay";
 
 // A non-numeric or non-positive COD_CAP_PAISE (a typo'd deploy config, an
 // accidentally-blank value, etc.) must not silently disable the cap. `??`
@@ -237,4 +238,35 @@ export async function createOrder(input: {
   }
 
   return { orderId: order.id, status: "cod_pending" };
+}
+
+/**
+ * Creates the app's own order (via createOrder, above) and, once that
+ * succeeds, a matching Razorpay order for the same amount — the pair the
+ * Checkout widget needs (razorpayOrderId + keyId + amountPaise) to open its
+ * payment modal. Reads the order's own `total` back from the row that was
+ * just inserted rather than recomputing it here, so this can never drift
+ * from what createOrder actually persisted.
+ */
+export async function startRazorpayPayment(input: {
+  lines: CartLine[];
+  addressId: string;
+}): Promise<
+  | { orderId: string; razorpayOrderId: string; keyId: string; amountPaise: number }
+  | { error: string }
+> {
+  const created = await createOrder({ ...input, paymentMode: "razorpay" });
+  if ("error" in created) return created;
+
+  const supabase = createServerClient();
+  const { data: order } = await supabase
+    .from("orders")
+    .select("total")
+    .eq("id", created.orderId)
+    .single();
+  if (!order) return { error: "Order not found after creation." };
+
+  const razorpayDetails = await createRazorpayOrderInternal(created.orderId, order.total);
+
+  return { orderId: created.orderId, ...razorpayDetails };
 }

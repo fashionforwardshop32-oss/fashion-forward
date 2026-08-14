@@ -34,6 +34,8 @@ export default function CheckoutPage() {
   const [stage, setStage] = useState<Stage>("loading");
   const [sessionError, setSessionError] = useState(false);
   const [customerId, setCustomerId] = useState<string | null>(null);
+  const [customerPhone, setCustomerPhone] = useState<string | null>(null);
+  const [addressId, setAddressId] = useState<string | null>(null);
   const [addressSummary, setAddressSummary] = useState<string | null>(null);
   const [stageError, setStageError] = useState<string | null>(null);
 
@@ -96,6 +98,7 @@ export default function CheckoutPage() {
             return;
           }
           setCustomerId(customer.id);
+          setCustomerPhone(customer.phone);
           setStage("address");
           return;
         }
@@ -168,11 +171,12 @@ export default function CheckoutPage() {
               // point (missing session included) means something is genuinely
               // wrong, and is worth an error state rather than a silent bounce.
               const { data, error } = await supabase.auth.getUser();
-              if (error || !data.user) {
+              if (error || !data.user || !data.user.phone) {
                 setStageError("Couldn't confirm your verified session. Please try reloading.");
                 return;
               }
               setCustomerId(data.user.id);
+              setCustomerPhone(data.user.phone);
               setStage("address");
             } catch {
               setStageError("Couldn't confirm your verified session. Please try reloading.");
@@ -199,6 +203,7 @@ export default function CheckoutPage() {
               setAddressSummary(
                 `${data.line1}${data.line2 ? `, ${data.line2}` : ""} — ${data.pincode}`,
               );
+              setAddressId(addressId);
               setStage("review");
             } catch {
               setStageError("Couldn't load that address. Please try reloading.");
@@ -207,8 +212,14 @@ export default function CheckoutPage() {
         />
       )}
 
-      {stage === "review" && cartDetails && addressSummary && (
-        <ReviewStep lines={cartDetails} addressSummary={addressSummary} />
+      {stage === "review" && cartDetails && addressSummary && addressId && customerPhone && (
+        <ReviewStep
+          lines={cartDetails}
+          rawLines={lines}
+          addressId={addressId}
+          addressSummary={addressSummary}
+          customerPhone={customerPhone}
+        />
       )}
     </main>
   );
