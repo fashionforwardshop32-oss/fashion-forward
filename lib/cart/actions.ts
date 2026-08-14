@@ -10,8 +10,24 @@ function createReadClient() {
   );
 }
 
+/**
+ * Upper bound on how many lines one call may ask about. This is a
+ * publicly-callable Server Action taking a caller-supplied array straight
+ * into an `.in("id", …)` query — nothing here is a data-exposure risk (it
+ * reads through the same public RLS policies anonymous browsing already
+ * uses), but an unbounded array is free amplification for the caller and
+ * paid work for us. The catalogue is ~150 SKUs; no honest bag is near 100.
+ */
+const MAX_CART_LINES = 100;
+
 export type CartDetailLine = {
   variantId: string;
+  /**
+   * Trustworthy quantity: a whole number, and on an `available` line never
+   * above that variant's real `stockQty`. Not necessarily what the caller
+   * passed in — see the clamp in getCartDetails. Consumers must price and
+   * total against this field, never the raw CartLine.qty they sent.
+   */
   qty: number;
   productId: string;
   productSlug: string;
@@ -43,9 +59,18 @@ type VariantRow = {
  * A variant that no longer exists, or whose product is no longer active,
  * comes back with available: false and zeroed price/stock — callers must
  * not include unavailable lines in any total.
+ *
+ * This is the sole trustworthy price/stock gatekeeper — Week 4's order
+ * creation will be built on top of it — so it validates the caller's `qty`
+ * rather than echoing it back. The browser cart lives in localStorage,
+ * which anyone can hand-edit, and the +/- stepper's client-side clamp is
+ * a convenience, not a control.
  */
 export async function getCartDetails(lines: CartLine[]): Promise<CartDetailLine[]> {
   if (lines.length === 0) return [];
+  if (lines.length > MAX_CART_LINES) {
+    throw new Error(`getCartDetails: too many lines (max ${MAX_CART_LINES})`);
+  }
 
   const supabase = createReadClient();
   const variantIds = lines.map((l) => l.variantId);
@@ -69,7 +94,9 @@ export async function getCartDetails(lines: CartLine[]): Promise<CartDetailLine[
     if (!variant || !product || !isActive) {
       return {
         variantId: line.variantId,
-        qty: line.qty,
+        // No real stock to clamp against here, but still don't echo a
+        // fractional/negative/NaN qty back out of this function.
+        qty: Number.isFinite(line.qty) ? Math.max(1, Math.trunc(line.qty)) : 1,
         productId: "",
         productSlug: "",
         title: "No longer available",
@@ -83,9 +110,20 @@ export async function getCartDetails(lines: CartLine[]): Promise<CartDetailLine[
 
     const cover = [...product.product_images].sort((a, b) => a.position - b.position)[0];
 
+    // Never echo the caller's qty back untouched: coerce it to a whole
+    // number, floor it at 1, and cap it at the stock that actually exists.
+    // A hand-edited localStorage entry (qty: 9999, qty: 2.5, qty: -3) would
+    // otherwise flow straight into the checkout total. Note this can land on
+    // 0 when stock_qty is 0 — a line that's listed but unbuyable, which the
+    // stepper already renders with "+" disabled and prices at ₹0.
+    // Number.isFinite first, because Math.trunc(NaN) is NaN and NaN survives
+    // both Math.max and Math.min — the clamp alone would pass it through.
+    const requestedQty = Number.isFinite(line.qty) ? Math.trunc(line.qty) : 1;
+    const clampedQty = Math.min(Math.max(1, requestedQty), variant.stock_qty);
+
     return {
       variantId: variant.id,
-      qty: line.qty,
+      qty: clampedQty,
       productId: product.id,
       productSlug: product.slug,
       title: product.title,

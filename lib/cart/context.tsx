@@ -21,7 +21,7 @@ function readStoredCart(): CartLine[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
+    const valid = parsed.filter(
       (l): l is CartLine =>
         typeof l === "object" &&
         l !== null &&
@@ -29,6 +29,17 @@ function readStoredCart(): CartLine[] {
         typeof l.qty === "number" &&
         l.qty > 0,
     );
+
+    // Fold duplicate variantIds together. addItem() already merges on add, so
+    // this is only reachable by hand-editing localStorage — but a duplicate
+    // would double-count the subtotal and collide on the React `key` in every
+    // list that renders these, so it's cheaper to normalise here than to have
+    // each consumer defend against it.
+    const byVariant = new Map<string, number>();
+    for (const line of valid) {
+      byVariant.set(line.variantId, (byVariant.get(line.variantId) ?? 0) + line.qty);
+    }
+    return [...byVariant].map(([variantId, qty]) => ({ variantId, qty }));
   } catch {
     return [];
   }
