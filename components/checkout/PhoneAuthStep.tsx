@@ -56,16 +56,24 @@ export function PhoneAuthStep({ onVerified }: { onVerified: () => void }) {
       return;
     }
     setLoading(true);
-    const { error: otpError } = await supabase.auth.signInWithOtp({
-      phone,
-      options: { channel: "whatsapp" },
-    });
-    setLoading(false);
-    if (otpError) {
-      setError(otpError.message);
-      return;
+    try {
+      const { error: otpError } = await supabase.auth.signInWithOtp({
+        phone,
+        options: { channel: "whatsapp" },
+      });
+      if (otpError) {
+        setError(otpError.message);
+        return;
+      }
+      setStep("otp");
+    } catch {
+      setError("Couldn't send the code. Check your connection and try again.");
+    } finally {
+      // In `finally` rather than on each exit path: whatever happens, the
+      // button must come back off "Sending…" — a stuck spinner with no error
+      // message is the one outcome the user can't act on.
+      setLoading(false);
     }
-    setStep("otp");
   }
 
   async function verifyOtp() {
@@ -84,23 +92,33 @@ export function PhoneAuthStep({ onVerified }: { onVerified: () => void }) {
       return;
     }
     setLoading(true);
-    const { error: verifyError } = await supabase.auth.verifyOtp({
-      phone,
-      token: otp.trim(),
-      type: "sms",
-    });
-    if (verifyError) {
+    try {
+      const { error: verifyError } = await supabase.auth.verifyOtp({
+        phone,
+        token: otp.trim(),
+        type: "sms",
+      });
+      if (verifyError) {
+        setError(verifyError.message);
+        return;
+      }
+      // Unlike signInWithOtp/verifyOtp, which resolve with an `error` field,
+      // ensureCustomerRecord is a Server Action — a network POST that *rejects*
+      // on failure (network blip, or a missing service-role Worker secret).
+      // Without this catch, that rejection skipped setLoading(false) and left
+      // the button stuck on "Verifying…" forever, with the OTP already consumed
+      // by the successful verifyOtp above — so not even a reload could retry it.
+      const customer = await ensureCustomerRecord();
+      if (!customer) {
+        setError("Couldn't set up your account. Try again.");
+        return;
+      }
+      onVerified();
+    } catch {
+      setError("Couldn't finish verifying. Check your connection and try again.");
+    } finally {
       setLoading(false);
-      setError(verifyError.message);
-      return;
     }
-    const customer = await ensureCustomerRecord();
-    setLoading(false);
-    if (!customer) {
-      setError("Couldn't set up your account. Try again.");
-      return;
-    }
-    onVerified();
   }
 
   return (
@@ -161,7 +179,14 @@ export function PhoneAuthStep({ onVerified }: { onVerified: () => void }) {
           </Button>
           <button
             type="button"
-            onClick={() => setStep("phone")}
+            onClick={() => {
+              // Abandoning this attempt: drop the half-typed code and any error
+              // from it, so re-entering the flow doesn't show stale state from
+              // a number the user has already moved on from.
+              setOtp("");
+              setError(null);
+              setStep("phone");
+            }}
             className="w-full text-center text-sm text-ink-muted underline"
           >
             Use a different number

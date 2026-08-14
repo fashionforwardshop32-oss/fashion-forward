@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
+import { ensureCustomerRecord } from "@/lib/auth/customer";
 import { useCart } from "@/lib/cart/context";
 import { getCartDetails, type CartDetailLine } from "@/lib/cart/actions";
 import { PhoneAuthStep } from "@/components/checkout/PhoneAuthStep";
@@ -65,20 +66,46 @@ export default function CheckoutPage() {
 
     async function loadSession() {
       try {
-        // supabase-js resolves getUser() with an AuthSessionMissingError in its
-        // `error` field for the ordinary "no one is logged in yet" case -- that
-        // is not a fetch failure, it's the ordinary anonymous-visitor case,
-        // so it must fall through to the auth stage rather than the error UI.
-        // Only a genuine thrown exception (network down, etc.) counts as a
-        // failure worth showing a reload prompt for.
-        const { data } = await supabase.auth.getUser();
+        // getUser() *resolves* with an `error` rather than throwing, so neither
+        // the try/catch below nor a bare truthiness check on `error` is enough
+        // on its own -- the two failure shapes have to be told apart by name:
+        //
+        //   AuthSessionMissingError -- nobody is logged in yet. The ordinary
+        //     anonymous-visitor case, not a failure. Falls through to the auth
+        //     stage. (Treating this as an error was the original bug.)
+        //   anything else -- a genuine failure (network blip, Supabase 5xx).
+        //     Discarding `error` entirely, which is how that first bug was
+        //     over-corrected, silently dropped a returning customer holding a
+        //     valid session cookie onto the phone-auth screen and burned a real
+        //     billable WhatsApp OTP on what should have been a retry.
+        const { data, error } = await supabase.auth.getUser();
         if (cancelled) return;
+
         if (data.user) {
-          setCustomerId(data.user.id);
+          // A valid session is not proof of a `customers` row: if
+          // ensureCustomerRecord() ever failed on a past visit after verifyOtp
+          // had already succeeded, this visitor is authenticated with no row,
+          // and `addresses.customer_id`'s NOT NULL FK would fail every address
+          // insert forever (with no way to self-heal -- `authenticated` has no
+          // INSERT policy on `customers`). Confirm/create the row before the
+          // address stage rather than trusting the session alone.
+          const customer = await ensureCustomerRecord();
+          if (cancelled) return;
+          if (!customer) {
+            setSessionError(true);
+            return;
+          }
+          setCustomerId(customer.id);
           setStage("address");
-        } else {
-          setStage("auth");
+          return;
         }
+
+        if (error && error.name !== "AuthSessionMissingError") {
+          setSessionError(true);
+          return;
+        }
+
+        setStage("auth");
       } catch {
         if (!cancelled) setSessionError(true);
       }
@@ -134,6 +161,12 @@ export default function CheckoutPage() {
           onVerified={async () => {
             setStageError(null);
             try {
+              // Deliberately a stricter rule than the initial check above:
+              // there, an AuthSessionMissingError is the ordinary "not logged
+              // in yet" case. Here it isn't -- verifyOtp has just succeeded, so
+              // a session provably exists. *Any* error from getUser() at this
+              // point (missing session included) means something is genuinely
+              // wrong, and is worth an error state rather than a silent bounce.
               const { data, error } = await supabase.auth.getUser();
               if (error || !data.user) {
                 setStageError("Couldn't confirm your verified session. Please try reloading.");
