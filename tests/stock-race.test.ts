@@ -4,7 +4,32 @@ import { beforeAll, describe, expect, it } from "vitest";
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "http://127.0.0.1:54321";
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 
+/**
+ * This suite writes real rows (auth users, customers, products, variants,
+ * orders, order_items) and permanently decrements stock, so it is hard-limited
+ * to a local Supabase stack -- same guard as tests/rls.test.ts. A remote
+ * SUPABASE_URL left exported in the shell would otherwise seed junk orders into
+ * the production Mumbai project and burn down real inventory.
+ */
+const isLoopback = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?(\/|$)/.test(SUPABASE_URL);
+if (!isLoopback) {
+  throw new Error(
+    `Refusing to run stock race tests against a non-loopback SUPABASE_URL (${SUPABASE_URL}). ` +
+      "This suite writes real data and decrements real stock, so it must only " +
+      "target local Supabase (http://127.0.0.1:54321 or http://localhost:54321) " +
+      "from `npx supabase status`."
+  );
+}
+
 const hasEnv = Boolean(SERVICE_ROLE_KEY);
+if (!hasEnv) {
+  // Written straight to stderr: Vitest swallows `console.*` emitted during
+  // collection, before any task is running.
+  process.stderr.write(
+    "[stock-race.test] SKIPPED: SUPABASE_SERVICE_ROLE_KEY is unset.\n" +
+      "[stock-race.test] Run `npx supabase start`, then export it from `npx supabase status` to run this suite.\n"
+  );
+}
 
 describe.skipIf(!hasEnv)("finalize_order concurrent stock race", () => {
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);

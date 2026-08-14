@@ -1,5 +1,26 @@
 -- supabase/migrations/20260814000002_finalize_order.sql
 
+-- SCOPE — READ BEFORE ADDING A CALLER.
+--
+-- This function is valid ONLY for the single payment-confirming transition:
+--   pending_payment -> confirmed   (Razorpay verify / webhook)
+--   cod_pending     -> confirmed   (COD order placement)
+--
+-- The stock decrement below is UNCONDITIONAL. It runs on whatever transition
+-- it is handed, guarded only by the p_from_status check — it is NOT keyed to
+-- "payment confirmation" in any way. So a plausible-looking future call such as
+-- finalize_order(id, 'confirmed', 'packed') for an admin status-update feature
+-- would silently decrement stock a SECOND time for an order that already paid
+-- for it. The from-status guard makes the function idempotent for a *repeat of
+-- the same transition pair* (the second call no-ops and returns false); it does
+-- nothing to protect a *different* transition pair.
+--
+-- Any future caller wanting a non-payment-confirming transition (packed,
+-- out_for_delivery, delivered, cancelled, returned, rto) must NOT reuse this
+-- function without first re-auditing the decrement logic — most of those
+-- transitions need no stock movement at all, and cancelled/returned/rto need
+-- an INCREMENT, not a decrement.
+
 create or replace function finalize_order(
   p_order_id uuid,
   p_from_status text,
@@ -27,10 +48,21 @@ begin
     return false;
   end if;
 
+  -- ORDER BY is load-bearing, not cosmetic. Each UPDATE below takes a row lock
+  -- on a variant and holds it until this transaction commits. Two multi-item
+  -- orders sharing variants but visiting them in different orders would each
+  -- hold one lock and wait on the other's — a classic deadlock, which Postgres
+  -- resolves by aborting one transaction with SQLSTATE 40P01, NOT with
+  -- 'insufficient_stock'. Callers branch on 'insufficient_stock' /
+  -- 'order_not_found', so a 40P01 would fall through as an unhandled error —
+  -- possibly after Razorpay already captured the payment. Locking every
+  -- variant in the same global order (by primary key) makes the cycle, and so
+  -- the deadlock, structurally impossible.
   for v_item in
     select oi.variant_id, oi.qty
     from order_items oi
     where oi.order_id = p_order_id
+    order by oi.variant_id
   loop
     -- The WHERE clause is the actual race-safety mechanism: this UPDATE
     -- only matches a row if there's still enough stock, and Postgres
