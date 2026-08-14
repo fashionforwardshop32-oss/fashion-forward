@@ -12,8 +12,37 @@ import { verifyPayment } from "@/lib/payments/verify";
 
 declare global {
   interface Window {
-    Razorpay: new (options: Record<string, unknown>) => { open: () => void };
+    // Optional, not just "not yet assigned a value" -- checkout.js is a
+    // third-party script loaded over the network, and code here must be
+    // able to ask "has it actually loaded yet?" and get a real answer
+    // rather than a type-checker's false assurance that it always has.
+    Razorpay?: new (options: Record<string, unknown>) => { open: () => void };
   }
+}
+
+/**
+ * createOrder/startRazorpayPayment/verifyPayment all return a fixed
+ * English message, not a stable error code -- Task 3's stock/cap
+ * rejections and this task's own pre-check "unavailable" rejection use
+ * different wording for what is, from the shopper's point of view, the
+ * same real-world event: an item in their bag is no longer buyable right
+ * now. Widened from a single "sold out" substring to also catch "no
+ * longer available" so the pre-check case (the one that matters most --
+ * an item selling out between page render and button click) routes to
+ * the same clear message instead of falling through to a generic
+ * "Something went wrong."
+ *
+ * A substring match on user-facing copy is not durable -- a future copy
+ * edit silently breaks routing again with no type error to catch it.
+ * The more durable fix is a discriminated `code` field on createOrder's
+ * (and startRazorpayPayment's/verifyPayment's) return type, but that
+ * ripples into the already-shipped COD path from Task 3 too, which is
+ * wider than this fix round's scope (Task 4's payment-processing error
+ * path). Centralizing the check here at least means there's one place to
+ * fix, not three, when that follow-up happens.
+ */
+function isUnavailableError(message: string): boolean {
+  return message.includes("sold out") || message.includes("no longer available");
 }
 
 /**
@@ -63,56 +92,96 @@ export function ReviewStep({
 
   async function payWithRazorpay() {
     setStatus("processing");
-    const started = await startRazorpayPayment({ lines: rawLines, addressId });
 
-    if ("error" in started) {
-      setStatus(started.error.includes("sold out") ? "sold-out" : "error");
+    // checkout.js loads asynchronously (next/script strategy="afterInteractive"
+    // still isn't a hard guarantee it's finished by the time this runs -- a
+    // slow network can still lose the race). Check BEFORE creating anything:
+    // failing here costs nothing. Failing after startRazorpayPayment has
+    // already inserted a DB order row and a live Razorpay order strands both.
+    if (!window.Razorpay) {
+      setStatus("error");
       return;
     }
 
-    const razorpay = new window.Razorpay({
-      key: started.keyId,
-      amount: started.amountPaise,
-      currency: "INR",
-      order_id: started.razorpayOrderId,
-      name: "Fashion Forward",
-      prefill: { contact: customerPhone },
-      theme: { color: getBrandColor() },
-      handler: async (response: {
-        razorpay_order_id: string;
-        razorpay_payment_id: string;
-        razorpay_signature: string;
-      }) => {
-        const result = await verifyPayment({
-          orderId: started.orderId,
-          razorpayOrderId: response.razorpay_order_id,
-          razorpayPaymentId: response.razorpay_payment_id,
-          razorpaySignature: response.razorpay_signature,
-        });
-        if ("error" in result) {
-          setStatus(result.error.includes("sold out") ? "sold-out" : "error");
-          return;
-        }
-        setPlacedOrderNo(result.orderNo);
-        setStatus("placed");
-      },
-      modal: {
-        ondismiss: () => setStatus("idle"),
-      },
-    });
+    let started: Awaited<ReturnType<typeof startRazorpayPayment>>;
+    try {
+      started = await startRazorpayPayment({ lines: rawLines, addressId });
+    } catch {
+      // Network blip, server error, etc. -- without this catch the
+      // rejection was unhandled and `status` stayed "processing" forever:
+      // both buttons permanently disabled, no recovery short of a reload.
+      setStatus("error");
+      return;
+    }
 
-    razorpay.open();
+    if ("error" in started) {
+      setStatus(isUnavailableError(started.error) ? "sold-out" : "error");
+      return;
+    }
+
+    try {
+      const razorpay = new window.Razorpay({
+        key: started.keyId,
+        amount: started.amountPaise,
+        currency: "INR",
+        order_id: started.razorpayOrderId,
+        name: "Fashion Forward",
+        prefill: { contact: customerPhone },
+        theme: { color: getBrandColor() },
+        handler: async (response: {
+          razorpay_order_id: string;
+          razorpay_payment_id: string;
+          razorpay_signature: string;
+        }) => {
+          // Razorpay's SDK does not await (or even look at) this callback's
+          // returned promise -- an uncaught throw here is a silent
+          // unhandled rejection, quite possibly AFTER a real payment was
+          // just captured. This needs its own try/catch; nothing further
+          // up the call stack will ever see a failure from inside here.
+          try {
+            const result = await verifyPayment({
+              orderId: started.orderId,
+              razorpayOrderId: response.razorpay_order_id,
+              razorpayPaymentId: response.razorpay_payment_id,
+              razorpaySignature: response.razorpay_signature,
+            });
+            if ("error" in result) {
+              setStatus(isUnavailableError(result.error) ? "sold-out" : "error");
+              return;
+            }
+            setPlacedOrderNo(result.orderNo);
+            setStatus("placed");
+          } catch {
+            setStatus("error");
+          }
+        },
+        modal: {
+          ondismiss: () => setStatus("idle"),
+        },
+      });
+
+      razorpay.open();
+    } catch {
+      // Covers both `new window.Razorpay(...)` throwing (e.g. malformed
+      // options) and `.open()` throwing -- either way the shopper needs a
+      // real error state, not a permanently-disabled "Processing…" button.
+      setStatus("error");
+    }
   }
 
   async function payWithCod() {
     setStatus("processing");
-    const result = await createOrder({ lines: rawLines, addressId, paymentMode: "cod" });
-    if ("error" in result) {
-      setStatus(result.error.includes("sold out") ? "sold-out" : "error");
-      return;
+    try {
+      const result = await createOrder({ lines: rawLines, addressId, paymentMode: "cod" });
+      if ("error" in result) {
+        setStatus(isUnavailableError(result.error) ? "sold-out" : "error");
+        return;
+      }
+      setPlacedOrderNo(result.orderId);
+      setStatus("placed");
+    } catch {
+      setStatus("error");
     }
-    setPlacedOrderNo(result.orderId);
-    setStatus("placed");
   }
 
   if (status === "placed") {
@@ -126,7 +195,16 @@ export function ReviewStep({
 
   return (
     <div className="space-y-4">
-      <Script src="https://checkout.razorpay.com/v1/checkout.js" strategy="lazyOnload" />
+      {/*
+        afterInteractive (not lazyOnload): lazyOnload defers loading until
+        after window "load", which a shopper clicking "Pay" quickly can
+        beat -- window.Razorpay wouldn't exist yet. The explicit
+        `if (!window.Razorpay)` guard in payWithRazorpay is the real
+        safety net (it can still lose the race on a slow connection even
+        with afterInteractive), but starting the load earlier makes that
+        guard actually rare instead of routine.
+      */}
+      <Script src="https://checkout.razorpay.com/v1/checkout.js" strategy="afterInteractive" />
 
       {blockedByUnavailable && (
         <div className="rounded-card bg-accent/10 p-4">
