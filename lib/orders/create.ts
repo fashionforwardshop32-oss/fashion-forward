@@ -8,19 +8,30 @@ import { generateOrderNo } from "./order-no";
 
 const COD_CAP_PAISE = Number(process.env.COD_CAP_PAISE ?? 300000);
 
-// See supabase/migrations/20260814000002_finalize_order.sql's "SCOPE — READ
-// BEFORE ADDING A CALLER" header: finalize_order is documented as valid only
-// for pending_payment -> confirmed (Razorpay) and cod_pending -> confirmed
-// (COD order placement). It is NOT valid for pending_payment -> cod_pending
-// -- lib/orders/transitions.ts's LEGAL_TRANSITIONS table agrees, explicitly
-// listing pending_payment and cod_pending as mutually exclusive (neither can
-// transition into the other). So a COD order is inserted directly with
-// status "cod_pending" (a fresh row, not a transition -- isLegalTransition
-// governs transitions between existing rows, not the initial value of a new
-// one), then finalize_order moves it cod_pending -> confirmed, which is both
-// the migration's documented COD case and the decrement/commit point.
+// COD orders are inserted at "pending_payment" (same initial value as the
+// Razorpay path -- no special-casing needed at insert time) and immediately
+// moved to "cod_pending" via finalize_order in the same request. This is
+// the order's real, externally-observable commit point for COD: stock
+// decrements here, and this is the row shape the storefront, the owner's
+// order list, and Week 5's admin "Confirm" action all expect to see. The
+// order only reaches "confirmed" later, via a separate owner action -- see
+// spec §7's COD flow and this migration's own SCOPE comment (updated in
+// 20260814000003_finalize_order_scope_comment.sql), which documents
+// pending_payment -> cod_pending as a third valid pair, precisely for this
+// call, alongside the two payment-confirming pairs used elsewhere.
+//
+// This does not conflict with lib/orders/transitions.ts's LEGAL_TRANSITIONS
+// table treating pending_payment and cod_pending as mutually exclusive --
+// that rule is about externally-observable transitions (an admin or the
+// storefront never seeing a COD order flip between these two states after
+// the fact). Here, "pending_payment" is a sub-second, purely-internal value
+// that exists only inside this one function call and is never read back by
+// any other code path -- by the time this function returns, or any other
+// request could observe the row, it is already at cod_pending. isLegalTransition
+// is a pre-flight advisory check for genuinely external transitions;
+// finalize_order's from/to pair, not that table, is what actually gates this.
 export type CreateOrderResult =
-  | { orderId: string; status: "pending_payment" | "confirmed" }
+  | { orderId: string; status: "pending_payment" | "cod_pending" }
   | { error: string };
 
 export async function createOrder(input: {
@@ -84,18 +95,16 @@ export async function createOrder(input: {
 
   const orderNo = await generateOrderNo(supabase);
 
-  // Razorpay orders start (and, in this task, stay) pending_payment -- Task
-  // 4/5/6 transition them to confirmed on actual payment. COD orders start
-  // cod_pending and are moved to confirmed a few lines down in the same
-  // request, via finalize_order, which is what actually decrements stock.
-  const initialStatus = input.paymentMode === "cod" ? "cod_pending" : "pending_payment";
-
+  // Both payment modes start at pending_payment. Razorpay orders stay there
+  // (Task 4/5/6 transition them to confirmed on actual payment). COD orders
+  // are moved to cod_pending a few lines down in the same request, via
+  // finalize_order -- that call is what actually decrements stock.
   const { data: order, error: orderError } = await supabase
     .from("orders")
     .insert({
       order_no: orderNo,
       customer_id: user.id,
-      status: initialStatus,
+      status: "pending_payment",
       payment_mode: input.paymentMode,
       subtotal,
       shipping_fee: shippingFee,
@@ -136,13 +145,13 @@ export async function createOrder(input: {
     return { orderId: order.id, status: "pending_payment" };
   }
 
-  // COD: cod_pending -> confirmed is finalize_order's documented COD case
-  // (see the SCOPE comment in the migration) and is the commit point that
-  // decrements stock.
+  // COD: pending_payment -> cod_pending is the commit point that decrements
+  // stock. This is the order's real resting state until Week 5's admin
+  // "Confirm" action later moves it to confirmed.
   const { data: finalized, error: finalizeError } = await supabase.rpc("finalize_order", {
     p_order_id: order.id,
-    p_from_status: "cod_pending",
-    p_to_status: "confirmed",
+    p_from_status: "pending_payment",
+    p_to_status: "cod_pending",
   });
 
   if (finalizeError?.message === "insufficient_stock") {
@@ -154,5 +163,5 @@ export async function createOrder(input: {
     return { error: "Couldn't confirm your order. Try again." };
   }
 
-  return { orderId: order.id, status: "confirmed" };
+  return { orderId: order.id, status: "cod_pending" };
 }
